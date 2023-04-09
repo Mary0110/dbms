@@ -137,6 +137,33 @@ EXCEPTION
             RETURN NULL;
 END;
 
+CREATE OR REPLACE FUNCTION describe_inline_constraints(schema_name IN VARCHAR2, tab_name IN VARCHAR2, col_name IN VARCHAR2) RETURN VARCHAR2
+IS
+    descr_res VARCHAR2(300);
+BEGIN
+    FOR cur_inline_constr IN  (SELECT * FROM
+                                ((SELECT CONSTRAINT_NAME FROM ALL_CONS_COLUMNS
+                                --ALL_CONS_COLUMNS describes columns
+                                -- that are accessible to the current user and that
+                                -- are specified in constraints.
+                                WHERE OWNER = schema_name AND TABLE_NAME = tab_name AND COLUMN_NAME = col_name) all_c
+                                INNER JOIN
+                            (SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, SEARCH_CONDITION FROM DBA_CONSTRAINTS
+                            WHERE OWNER = (schema_name) AND TABLE_NAME = (tab_name) AND GENERATED = 'GENERATED NAME') dba
+                            ON all_c.CONSTRAINT_NAME = dba.CONSTRAINT_NAME)) LOOP
+        CASE cur_inline_constr.CONSTRAINT_TYPE
+            WHEN 'P' THEN descr_res := descr_res || ' PRIMARY KEY';
+            WHEN 'U' THEN descr_res := descr_res ||' UNIQUE';
+            WHEN 'C' THEN
+                IF cur_inline_constr.SEARCH_CONDITION NOT LIKE '% IS NOT NULL' THEN
+                    descr_res := descr_res || ' CHECK(' || cur_inline_constr.SEARCH_CONDITION || ')';
+                END IF;
+            ELSE NULL;
+        END CASE;
+    END LOOP;
+RETURN descr_res;
+END;
+
 CREATE OR REPLACE FUNCTION describe_sequence(schema_name IN VARCHAR2, seq_name IN VARCHAR2) RETURN VARCHAR2
 IS
     seq_min_value NUMBER;
