@@ -80,14 +80,14 @@ select USER from dual;
 
 CREATE OR REPLACE FUNCTION describe_column(schema_name IN VARCHAR2, tab_name IN VARCHAR2, col_name IN VARCHAR2) RETURN VARCHAR2
 IS
-clmn_dt VARCHAR2(128);
-clmn_nullable VARCHAR2(1);
-clmn_data_default LONG;
-clmn_data_precision NUMBER;
-clmn_data_scale NUMBER;
-clmn_char_length NUMBER;
-descr_res VARCHAR2(500) := '';
-comma_in_varchar NUMBER := 0;
+    clmn_dt VARCHAR2(128);
+    clmn_nullable VARCHAR2(1);
+    clmn_data_default LONG;
+    clmn_data_precision NUMBER;
+    clmn_data_scale NUMBER;
+    clmn_char_length NUMBER;
+    descr_res VARCHAR2(500) := '';
+    comma_in_varchar NUMBER := 0;
 BEGIN
     SELECT DATA_TYPE, nullable, data_default, data_precision, data_scale, char_length INTO
     clmn_dt, clmn_nullable, clmn_data_default, clmn_data_precision, clmn_data_scale, clmn_char_length
@@ -134,6 +134,36 @@ BEGIN
 EXCEPTION
     WHEN OTHERS THEN
             DBMS_OUTPUT.PUT_LINE('error in describe column function');
+            RETURN NULL;
+END;
+
+CREATE OR REPLACE FUNCTION describe_sequence(schema_name IN VARCHAR2, seq_name IN VARCHAR2) RETURN VARCHAR2
+IS
+    seq_min_value NUMBER;
+    seq_max_value NUMBER;
+    seq_increment_by NUMBER;
+    gen_type VARCHAR2(10);
+    seq_description VARCHAR2(300);
+BEGIN
+    SELECT MIN_VALUE, MAX_VALUE, INCREMENT_BY INTO seq_min_value, seq_max_value, seq_increment_by FROM ALL_SEQUENCES WHERE SEQUENCE_NAME = seq_name AND SEQUENCE_OWNER = (schema_name);
+    SELECT GENERATION_TYPE INTO gen_type FROM ALL_TAB_IDENTITY_COLS WHERE SEQUENCE_NAME = seq_name AND OWNER = (schema_name);
+    -- It makes no difference how to do this or the following.
+    -- seq_description := 'GENERATED ' || gen_type || ' AS IDENTITY' || ' START WITH ' || min_val || ' INCREMENT BY ' || inc_by || ' MAXVALUE ' || max_val;
+
+    seq_description := 'GENERATED ' || gen_type || ' AS IDENTITY';
+    IF seq_min_value != 1 THEN
+        seq_description := seq_description || ' START WITH ' || seq_min_value;
+    END IF;
+    IF seq_increment_by != 1 THEN
+        seq_description := seq_description || ' INCREMENT BY ' || seq_increment_by;
+    END IF;
+    IF seq_max_value != 9999999999999999999999999999 THEN
+        seq_description := seq_description || ' MAXVALUE ' || seq_max_value;
+    END IF;
+    RETURN seq_description;
+EXCEPTION
+    WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Unknown error in get_sequence_description()');
             RETURN NULL;
 END;
 
