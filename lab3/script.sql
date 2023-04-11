@@ -1,8 +1,5 @@
 create or replace procedure c##dev.compare_tables(dev_scheme in varchar2, prod_scheme in varchar2)
-    authid current_user
-as
-    num_of_tables_in_prod number;
-        command varchar2;
+    as
     begin
         for cur_table_names_row in (select * from
                         (select table_name as d_table_name from all_tables where owner = dev_scheme) dev_tables
@@ -10,12 +7,14 @@ as
                         (select table_name as p_table_name from all_tables where owner = prod_scheme) prod_tables
                         on dev_tables.d_table_name = prod_tables.p_table_name)
             loop
-
+            dbms_output.PUT_LINE(cur_table_names_row.p_table_name);
             if cur_table_names_row.d_table_name is NULL then
-                insert into tables_to_drop values cur_table_names_row.p_table_name ;
+
+                insert into c##dev.tables_to_drop(name)
+                values (cur_table_names_row.p_table_name) ;
 
             elsif cur_table_names_row.p_table_name is NULL then
-                insert into tables_to_create values cur_table_names_row.d_table_name;
+                insert into tables_to_create(name) values (cur_table_names_row.d_table_name);
             else
                 for cur_columns in (select * from
                                 (select COLUMN_NAME dev_col_name from ALL_TAB_COLUMNS
@@ -37,40 +36,6 @@ as
                                 DBMS_OUTPUT.PUT_LINE('ALTER TABLE ' || cur_table_names_row.p_table_name || ' MODIFY ' || describe_column(dev_scheme, cur_table_names_row.p_table_name, cur_columns.dev_col_name) || ';');
                          END IF;
                     end loop;
---                 for cur_column in (select * from ALL_TAB_COLS
---                                             where owner = dev_scheme
---                                             and table_name = cur_row.d_table_name) loop
---                     insert into columns values ()
---
---                     end loop;
---
---                 for column in (select * from ALL_TAB_COLS
---                                         where owner = dev_scheme
---                                         and table_name = dev_table_item.TABLE_NAME) loop
---                     if column.COLUMN_NAME not in (select * from ALL_TAB_COLS
---                                         where owner = prod_scheme
---                                         and table_name = dev_table_item.TABLE_NAME) then
---                         command := 'alter table '||prod_scheme||'.'||dev_table_item.TABLE_NAME||' add column '||column.COLUMN_NAME|| column.DATA_TYPE||';';
---                         execute immediate command;
---                     end if;
---                 end loop;
---             end if;
---         end loop;
---         for prod_table_item in (select * from all_tables where owner = prod_scheme) loop
---             if prod_table_item.TABLE_NAME not in (select * from all_tables where owner = dev_scheme) then
---                 command := 'drop table'||prod_scheme||'.'||prod_table_item.TABLE_NAME||';';
---                 execute immediate command;
---             else
---                 for column in (select * from ALL_TAB_COLS
---                                             where owner = prod_scheme
---                                             and table_name = prod_table_item.TABLE_NAME) loop
---                         if column.COLUMN_NAME not in (select * from ALL_TAB_COLS
---                                             where owner = dev_scheme
---                                             and table_name = prod_table_item.TABLE_NAME) then
---                             command := 'alter table '||prod_scheme||'.'||prod_table_item.TABLE_NAME||' drop column '||column.COLUMN_NAME||';';
---                             execute immediate command;
---                         end if;
---                 end loop;
             end if;
         end loop;
     end;
@@ -140,6 +105,7 @@ END;
 CREATE OR REPLACE FUNCTION describe_inline_constraints(schema_name IN VARCHAR2, tab_name IN VARCHAR2, col_name IN VARCHAR2) RETURN VARCHAR2
 IS
     descr_res VARCHAR2(300);
+
 BEGIN
     FOR cur_inline_constr IN  (SELECT * FROM
                                 ((SELECT CONSTRAINT_NAME FROM ALL_CONS_COLUMNS
@@ -148,18 +114,19 @@ BEGIN
                                 -- are specified in constraints.
                                 WHERE OWNER = schema_name AND TABLE_NAME = tab_name AND COLUMN_NAME = col_name) all_c
                                 INNER JOIN
-                            (SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, SEARCH_CONDITION FROM DBA_CONSTRAINTS
+                            (SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, SEARCH_CONDITION FROM ALL_CONSTRAINTS
                             WHERE OWNER = (schema_name) AND TABLE_NAME = (tab_name) AND GENERATED = 'GENERATED NAME') dba
                             ON all_c.CONSTRAINT_NAME = dba.CONSTRAINT_NAME)) LOOP
-        CASE cur_inline_constr.CONSTRAINT_TYPE
-            WHEN 'P' THEN descr_res := descr_res || ' PRIMARY KEY';
-            WHEN 'U' THEN descr_res := descr_res ||' UNIQUE';
-            WHEN 'C' THEN
-                IF cur_inline_constr.SEARCH_CONDITION NOT LIKE '% IS NOT NULL' THEN
-                    descr_res := descr_res || ' CHECK(' || cur_inline_constr.SEARCH_CONDITION || ')';
-                END IF;
-            ELSE NULL;
-        END CASE;
+        if cur_inline_constr.CONSTRAINT_TYPE ='P' then
+            descr_res := descr_res || ' PRIMARY KEY';
+        elsif cur_inline_constr.CONSTRAINT_TYPE ='U' THEN
+            descr_res := descr_res ||' UNIQUE';
+        elsif cur_inline_constr.CONSTRAINT_TYPE ='C' THEN
+            IF cur_inline_constr.SEARCH_CONDITION NOT LIKE '% IS NOT NULL' THEN
+                descr_res := descr_res || ' CHECK(' || cur_inline_constr.SEARCH_CONDITION || ')';
+            END IF;
+        ELSE NULL;
+        END if;
     END LOOP;
 RETURN descr_res;
 END;
@@ -190,18 +157,20 @@ BEGIN
     RETURN seq_description;
 EXCEPTION
     WHEN OTHERS THEN
-            DBMS_OUTPUT.PUT_LINE('Unknown error in get_sequence_description()');
+            DBMS_OUTPUT.PUT_LINE('Error in get_sequence_description()');
             RETURN NULL;
 END;
 
 
-create table tables_to_drop(
-    name varchar2(100)
+create table c##dev.tables_to_drop(
+    name VARCHAR2(128)
 );
+drop table tables_to_drop;
 
-create table tables_to_create(
-    name varchar2(100)
+create table c##dev.tables_to_create(
+    name VARCHAR2(128)
 );
+drop table tables_to_create;
 
 create table columns(
     column_name varchar2(100) primary key,
@@ -215,4 +184,18 @@ call c##dev.compare_tables('C##DEV', 'C##PROD');
 select * from ALL_TAB_COLUMNS;
 --upper names
 --tables to drop
---
+-- --
+select table_name from all_tables;
+SELECT
+    COLUMN_NAME,
+    DATA_TYPE,
+    DATA_LENGTH,
+    DATA_PRECISION,
+    DATA_SCALE
+FROM ALL_TAB_COLS
+where COLUMN_NAME = 'TABLE_NAME';
+insert into tables_to_create(name) values (select * from c##dev.al)
+;
+select *from all_tables where owner = 'c##dev';
+call compare_tables('C##DEV', 'C##PROD');
+select * from tables_to_create;
