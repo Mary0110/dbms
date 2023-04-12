@@ -6,7 +6,7 @@ BEGIN
     compare_procedures(dev_schema_name, prod_schema_name);
     compare_packages(dev_schema_name, prod_schema_name);
     compare_indexes(dev_schema_name, prod_schema_name);
---     EXECUTE IMMEDIATE 'TRUNCATE TABLE tables_to_create';
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE tables_to_create';
 END compare_schemes;
 
 CREATE OR REPLACE FUNCTION get_index_string(schema_name VARCHAR2, ind_name VARCHAR2)
@@ -68,7 +68,7 @@ BEGIN
             IF rec.dev_uniqueness != 'NONUNIQUE' THEN
                 buf := buf || rec.dev_uniqueness;
             END IF;
-            buf := buf || ' INDEX ' || rec.dev_index_name || get_index_string(dev_schema_name, rec.dev_index_name) || ';';
+            buf := buf || ' INDEX ' || rec.dev_index_name ||' ON'|| get_index_string(dev_schema_name, rec.dev_index_name) || ';';
             DBMS_OUTPUT.PUT_LINE(buf);
             buf := NULL;
             CONTINUE;
@@ -87,7 +87,7 @@ BEGIN
             IF rec.dev_uniqueness != 'NONUNIQUE' THEN
                 buf := buf || rec.dev_uniqueness;
             END IF;
-            buf := buf || ' INDEX ' || rec.dev_index_name || get_index_string(dev_schema_name, rec.dev_index_name) || ';';
+            buf := buf || ' INDEX ' || rec.dev_index_name ||' ON'|| get_index_string(dev_schema_name, rec.dev_index_name) || ';';
             DBMS_OUTPUT.PUT_LINE(buf);
             buf := NULL;
         END IF;
@@ -186,9 +186,7 @@ END compare_callables;
 create or replace procedure compare_functions(dev_schema_name in VARCHAR2, prod_schema_name IN VARCHAR2)
 IS
 BEGIN
-    dbms_output.PUT_LINE('start');
     compare_callables(dev_schema_name, prod_schema_name, 'FUNCTION');
-        dbms_output.PUT_LINE('end');
 
 END compare_functions;
 
@@ -309,11 +307,8 @@ BEGIN
     END IF;
 
 EXCEPTION
-    WHEN NO_DATA_FOUND THEN
-            DBMS_OUTPUT.PUT_LINE('NO_DATA_FOUND in get_outline_constraint()');
-            RETURN NULL;
     WHEN OTHERS THEN
-            DBMS_OUTPUT.PUT_LINE('Unknown error in get_outline_constraint()');
+            DBMS_OUTPUT.PUT_LINE('ERROR in get_outline_constraint()');
             RETURN NULL;
 END get_outline_constraint;
 
@@ -379,11 +374,8 @@ BEGIN
     END IF;
     RETURN buff;
 EXCEPTION
-    WHEN NO_DATA_FOUND THEN
-            DBMS_OUTPUT.PUT_LINE('NO_DATA_FOUND in get_fk_description()');
-            RETURN NULL;
     WHEN OTHERS THEN
-            DBMS_OUTPUT.PUT_LINE('Unknown error in get_fk_description()');
+            DBMS_OUTPUT.PUT_LINE('ERROR in get_fk_description()');
             RETURN NULL;
 END get_fk_description;
 
@@ -427,11 +419,8 @@ BEGIN
     END CASE;
     RETURN buff;
 EXCEPTION
-    WHEN NO_DATA_FOUND THEN
-            DBMS_OUTPUT.PUT_LINE('NO_DATA_FOUND in get_not_fk_constraint_desription()');
-            RETURN NULL;
     WHEN OTHERS THEN
-            DBMS_OUTPUT.PUT_LINE('Unknown error in get_not_fk_constraint_desription()');
+            DBMS_OUTPUT.PUT_LINE('ERROR in get_not_fk_constraint_desription()');
             RETURN NULL;
 END get_not_fk_constraint_desription;
 
@@ -543,7 +532,7 @@ END is_table_exists_in_tables_to_create;
 CREATE OR REPLACE PROCEDURE update_tables_to_create(schema_name IN VARCHAR2)
 IS
     CURSOR cur_get_table IS
-    SELECT level, CONNECT_BY_ISCYCLE is_cycle, parent_owner, parent_table, child_owner, child_table, constr_name, SYS_CONNECT_BY_PATH(parent_table, '<-') cycle_path
+    SELECT level, CONNECT_BY_ISCYCLE is_cycle, parent_owner, parent_table, child_owner, child_table, constr_name, SYS_CONNECT_BY_PATH(parent_table, '-') cycle_path
     FROM (SELECT pk.OWNER parent_owner, pk.TABLE_NAME parent_table, fk.OWNER child_owner, fk.TABLE_NAME child_table, fk.CONSTRAINT_NAME constr_name
             FROM ALL_CONSTRAINTS pk
             INNER JOIN ALL_CONSTRAINTS fk
@@ -572,10 +561,8 @@ BEGIN
         END IF;
     END LOOP;
 EXCEPTION
-    WHEN NO_DATA_FOUND THEN
-            DBMS_OUTPUT.PUT_LINE('NO_DATA_FOUND in update_tables_to_create()');
     WHEN OTHERS THEN
-            DBMS_OUTPUT.PUT_LINE('Unknown error in update_tables_to_create()');
+            DBMS_OUTPUT.PUT_LINE('ERROR in update_tables_to_create()');
 END update_tables_to_create;
 
 CREATE OR REPLACE PROCEDURE create_table(schema_name IN VARCHAR2, tab_name IN VARCHAR2, is_create_fk_constr IN NUMBER)
@@ -633,7 +620,7 @@ BEGIN
     END LOOP;
 
     FOR rec in (SELECT * FROM TABLES_TO_CREATE WHERE is_cycle = 1) LOOP
-        DBMS_OUTPUT.PUT_LINE('ERROR cyclic foreign key: ' || rec.path);
+--         DBMS_OUTPUT.PUT_LINE('ERROR cyclic foreign key: ' || rec.path);
         DBMS_OUTPUT.PUT_LINE('ALTER TABLE ' || rec.table_name || ' ADD' ||  CHR(10) || get_fk_description(schema_name, rec.fk_name) || ';');
     END LOOP;
 END create_all_tables;
@@ -664,7 +651,7 @@ BEGIN
     RETURN seq_description;
 EXCEPTION
     WHEN OTHERS THEN
-            DBMS_OUTPUT.PUT_LINE('Error in get_sequence_description()');
+            DBMS_OUTPUT.PUT_LINE('ERROR in get_sequence_description()');
             RETURN NULL;
 END;
 

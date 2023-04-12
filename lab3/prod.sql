@@ -12,3 +12,4 @@ create table c##prod.table_two(
     field_first number
 );
 drop table table_two;
+create index first_index on table_one(field_first);
