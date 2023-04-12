@@ -6,7 +6,7 @@ BEGIN
     compare_procedures(dev_schema_name, prod_schema_name);
     compare_packages(dev_schema_name, prod_schema_name);
     compare_indexes(dev_schema_name, prod_schema_name);
-    EXECUTE IMMEDIATE 'TRUNCATE TABLE tables_to_create';
+--     EXECUTE IMMEDIATE 'TRUNCATE TABLE tables_to_create';
 END compare_schemes;
 
 CREATE OR REPLACE FUNCTION get_index_string(schema_name VARCHAR2, ind_name VARCHAR2)
@@ -186,7 +186,10 @@ END compare_callables;
 create or replace procedure compare_functions(dev_schema_name in VARCHAR2, prod_schema_name IN VARCHAR2)
 IS
 BEGIN
+    dbms_output.PUT_LINE('start');
     compare_callables(dev_schema_name, prod_schema_name, 'FUNCTION');
+        dbms_output.PUT_LINE('end');
+
 END compare_functions;
 
 CREATE OR REPLACE PROCEDURE compare_procedures(dev_schema_name IN VARCHAR2, prod_schema_name IN VARCHAR2)
@@ -204,14 +207,11 @@ create or replace procedure c##dev.compare_tables(dev_scheme in varchar2, prod_s
                         (select table_name as p_table_name from all_tables where owner = prod_scheme) prod_tables
                         on dev_tables.d_table_name = prod_tables.p_table_name)
             loop
-            dbms_output.PUT_LINE(cur_table_names_row.p_table_name);
             if cur_table_names_row.d_table_name is NULL then
                 DBMS_OUTPUT.PUT_LINE('DROP TABLE ' || cur_table_names_row.p_table_name || ';');
-                insert into c##dev.tables_to_drop(name)
-                values (cur_table_names_row.p_table_name) ;
 
             elsif cur_table_names_row.p_table_name is NULL then
-                insert into tables_to_create(name) values (cur_table_names_row.d_table_name);
+                insert into tables_to_create(owner,table_name) values (dev_scheme, cur_table_names_row.d_table_name);
             else
                 for cur_columns in (select * from
                                 (select COLUMN_NAME dev_col_name from ALL_TAB_COLUMNS
@@ -233,8 +233,15 @@ create or replace procedure c##dev.compare_tables(dev_scheme in varchar2, prod_s
                                 DBMS_OUTPUT.PUT_LINE('ALTER TABLE ' || cur_table_names_row.d_table_name || ' MODIFY ' || describe_column(dev_scheme, cur_table_names_row.p_table_name, cur_columns.dev_col_name) || ';');
                          END IF;
                     end loop;
+                end if;
 
-
+        end loop;
+            for cur_table_names_row in (select * from
+                        (select table_name as d_table_name from all_tables where owner = dev_scheme) dev_tables
+                        inner join
+                        (select table_name as p_table_name from all_tables where owner = prod_scheme) prod_tables
+                        on dev_tables.d_table_name = prod_tables.p_table_name)
+            loop
                     FOR rec in (SELECT * FROM
                                 ((SELECT CONSTRAINT_NAME dev_constr_name FROM ALL_CONSTRAINTS
                                 WHERE OWNER = (dev_scheme) AND TABLE_NAME = UPPER(cur_table_names_row.d_table_name) AND GENERATED != 'GENERATED NAME') dev
@@ -253,12 +260,38 @@ create or replace procedure c##dev.compare_tables(dev_scheme in varchar2, prod_s
                             END IF;
                         END IF;
                     END LOOP;
-            end if;
         end loop;
+
+        create_all_tables(dev_scheme);
     end;
 select * from all_constraints;
 select * from all_tables;
 select USER from dual;
+
+CREATE OR REPLACE PROCEDURE cmp_outline_constraints(dev_schema_name IN VARCHAR2, prod_schema_name IN VARCHAR2, tab_name IN VARCHAR2)
+IS
+    CURSOR cur_get_constr_name IS
+    SELECT * FROM
+    ((SELECT CONSTRAINT_NAME dev_constr_name FROM ALL_CONSTRAINTS
+    WHERE OWNER = UPPER(dev_schema_name) AND TABLE_NAME = UPPER(tab_name) AND GENERATED != 'GENERATED NAME') dev
+    FULL OUTER JOIN
+    (SELECT CONSTRAINT_NAME prod_constr_name FROM ALL_CONSTRAINTS
+    WHERE OWNER = UPPER(prod_schema_name) AND TABLE_NAME = UPPER(tab_name) AND GENERATED != 'GENERATED NAME') prod
+    ON dev.dev_constr_name = prod.prod_constr_name);
+BEGIN
+    FOR rec in cur_get_constr_name LOOP
+        IF rec.dev_constr_name IS NULL THEN
+            DBMS_OUTPUT.PUT_LINE('ALTER TABLE ' || UPPER(tab_name) || ' DROP CONSTRAINT ' || rec.prod_constr_name || ';');
+        ELSIF rec.prod_constr_name IS NULL THEN
+            DBMS_OUTPUT.PUT_LINE('ALTER TABLE ' || UPPER(tab_name) || ' ADD ' || get_outline_constraint(dev_schema_name, rec.dev_constr_name) || ';');
+        ELSE
+            IF get_outline_constraint(dev_schema_name, rec.dev_constr_name) != get_outline_constraint(prod_schema_name, rec.prod_constr_name) THEN
+                DBMS_OUTPUT.PUT_LINE('ALTER TABLE ' || UPPER(tab_name) || ' DROP CONSTRAINT ' || rec.prod_constr_name || ';');
+                DBMS_OUTPUT.PUT_LINE('ALTER TABLE ' || UPPER(tab_name) || ' ADD ' || get_outline_constraint(dev_schema_name, rec.dev_constr_name) || ';');
+            END IF;
+        END IF;
+    END LOOP;
+END cmp_outline_constraints;
 
 CREATE OR REPLACE FUNCTION get_outline_constraint(schema_name IN VARCHAR2, constr_name IN VARCHAR2) RETURN VARCHAR2
 IS
@@ -283,6 +316,26 @@ EXCEPTION
             DBMS_OUTPUT.PUT_LINE('Unknown error in get_outline_constraint()');
             RETURN NULL;
 END get_outline_constraint;
+
+    CREATE OR REPLACE FUNCTION get_outline_constraints_description(schema_name IN VARCHAR2, tab_name IN VARCHAR2, is_create_fk_constr IN NUMBER) RETURN VARCHAR2
+IS
+    CURSOR cur_get_constraints IS
+    SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM ALL_CONSTRAINTS
+    WHERE OWNER = UPPER(schema_name) AND TABLE_NAME = UPPER(tab_name) AND GENERATED != 'GENERATED NAME';
+    buff VARCHAR2(5000);
+BEGIN
+    FOR rec in cur_get_constraints LOOP
+        IF rec.CONSTRAINT_TYPE = 'R' THEN
+            IF is_create_fk_constr = 1 THEN
+                buff := buff || get_fk_description(schema_name, rec.CONSTRAINT_NAME) || ',' || CHR(10);
+            END IF;
+        ELSE
+            buff := buff || get_not_fk_constraint_desription(schema_name, rec.CONSTRAINT_NAME) || ',' || CHR(10);
+        END IF;
+    END LOOP;
+    buff := RTRIM(buff, ',' || CHR(10));
+    RETURN buff;
+END get_outline_constraints_description;
 
 CREATE OR REPLACE FUNCTION get_fk_description(schema_name IN VARCHAR2, constr_name IN VARCHAR2) RETURN VARCHAR2
 IS
@@ -470,6 +523,121 @@ BEGIN
 RETURN descr_res;
 END;
 
+CREATE OR REPLACE FUNCTION is_table_exists_in_tables_to_create(tab_name IN VARCHAR2) RETURN BOOLEAN
+IS
+    num NUMBER;
+BEGIN
+    SELECT DISTINCT COUNT(TABLE_NAME) INTO num FROM tables_to_create WHERE TABLE_NAME = UPPER(tab_name);
+    IF num > 0 THEN
+        RETURN TRUE;
+    ELSE
+        RETURN FALSE;
+    END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RETURN FALSE;
+    WHEN OTHERS THEN
+        RETURN FALSE;
+END is_table_exists_in_tables_to_create;
+
+CREATE OR REPLACE PROCEDURE update_tables_to_create(schema_name IN VARCHAR2)
+IS
+    CURSOR cur_get_table IS
+    SELECT level, CONNECT_BY_ISCYCLE is_cycle, parent_owner, parent_table, child_owner, child_table, constr_name, SYS_CONNECT_BY_PATH(parent_table, '<-') cycle_path
+    FROM (SELECT pk.OWNER parent_owner, pk.TABLE_NAME parent_table, fk.OWNER child_owner, fk.TABLE_NAME child_table, fk.CONSTRAINT_NAME constr_name
+            FROM ALL_CONSTRAINTS pk
+            INNER JOIN ALL_CONSTRAINTS fk
+            ON pk.OWNER = fk.R_OWNER AND pk.CONSTRAINT_NAME = fk.R_CONSTRAINT_NAME
+            WHERE pk.OWNER = UPPER(schema_name))
+    CONNECT BY NOCYCLE PRIOR child_table = parent_table;
+    tmp_lvl NUMBER := 0;
+BEGIN
+    FOR rec in cur_get_table LOOP
+        IF rec.is_cycle = 1 THEN
+            UPDATE TABLES_TO_CREATE SET owner = rec.child_owner, lvl = rec.level,
+            is_cycle = rec.is_cycle, fk_name = rec.constr_name, path = rec.cycle_path
+            WHERE table_name = rec.child_table;
+            CONTINUE;
+        END IF;
+
+        IF NOT is_table_exists_in_tables_to_create(rec.child_table) THEN
+            CONTINUE;
+        END IF;
+
+        SELECT lvl INTO tmp_lvl FROM TABLES_TO_CREATE WHERE table_name = rec.child_table;
+        IF rec.level > tmp_lvl THEN
+            UPDATE TABLES_TO_CREATE SET owner = rec.child_owner, lvl = rec.level,
+            is_cycle = rec.is_cycle, fk_name = rec.constr_name, path = rec.cycle_path
+            WHERE table_name = rec.child_table;
+        END IF;
+    END LOOP;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('NO_DATA_FOUND in update_tables_to_create()');
+    WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Unknown error in update_tables_to_create()');
+END update_tables_to_create;
+
+CREATE OR REPLACE PROCEDURE create_table(schema_name IN VARCHAR2, tab_name IN VARCHAR2, is_create_fk_constr IN NUMBER)
+IS
+    CURSOR cur_get_col IS
+    SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS
+    WHERE OWNER = UPPER(schema_name) AND TABLE_NAME = UPPER(tab_name);
+    buff VARCHAR2(5000);
+    outline_constr_buff VARCHAR2(3000);
+BEGIN
+    buff := 'CREATE TABLE ' || tab_name || ' (' || CHR(10);
+    FOR rec in cur_get_col LOOP
+        buff := buff || describe_column(schema_name, tab_name, rec.COLUMN_NAME) || ',' || CHR(10);
+    END LOOP;
+    outline_constr_buff := get_outline_constraints_description(schema_name, tab_name, is_create_fk_constr);
+    IF outline_constr_buff IS NULL THEN
+        buff := RTRIM(buff, ',' || CHR(10));
+    ELSE
+        buff := buff || outline_constr_buff;
+    END IF;
+    buff := buff || ');';
+    DBMS_OUTPUT.PUT_LINE(buff);
+END create_table;
+
+CREATE OR REPLACE FUNCTION is_table_exists(schema_name IN VARCHAR2, tab_name IN VARCHAR2) RETURN BOOLEAN
+IS
+    num NUMBER;
+BEGIN
+    SELECT DISTINCT COUNT(TABLE_NAME) INTO num FROM DBA_TABLES WHERE OWNER = UPPER(schema_name) AND TABLE_NAME = UPPER(tab_name);
+    IF num > 0 THEN
+        RETURN TRUE;
+    ELSE
+        RETURN FALSE;
+    END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RETURN FALSE;
+    WHEN OTHERS THEN
+        RETURN FALSE;
+END is_table_exists;
+
+CREATE OR REPLACE PROCEDURE create_all_tables(schema_name IN VARCHAR2)
+IS
+is_create_fk_constr NUMBER;
+BEGIN
+    update_tables_to_create(schema_name);
+
+    FOR rec in (SELECT * FROM TABLES_TO_CREATE ORDER BY lvl) LOOP
+        IF rec.is_cycle = 1 THEN
+            is_create_fk_constr := 0;
+        ELSE
+            is_create_fk_constr := 1;
+        END IF;
+        create_table(schema_name, rec.table_name, is_create_fk_constr);
+    END LOOP;
+
+    FOR rec in (SELECT * FROM TABLES_TO_CREATE WHERE is_cycle = 1) LOOP
+        DBMS_OUTPUT.PUT_LINE('ERROR cyclic foreign key: ' || rec.path);
+        DBMS_OUTPUT.PUT_LINE('ALTER TABLE ' || rec.table_name || ' ADD' ||  CHR(10) || get_fk_description(schema_name, rec.fk_name) || ';');
+    END LOOP;
+END create_all_tables;
+
 CREATE OR REPLACE FUNCTION describe_sequence(schema_name IN VARCHAR2, seq_name IN VARCHAR2) RETURN VARCHAR2
 IS
     seq_min_value NUMBER;
@@ -501,10 +669,17 @@ EXCEPTION
 END;
 
 
-create table c##dev.tables_to_drop(
-    name VARCHAR2(128)
+create table c##dev.tables_to_create(
+    tables_to_create_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    owner VARCHAR2(128),
+    table_name VARCHAR2(128),
+    lvl NUMBER DEFAULT 0,
+    is_cycle NUMBER DEFAULT 0,
+    fk_name VARCHAR2(128),
+    path VARCHAR2(500)
+
 );
-drop table tables_to_drop;
+drop table tables_to_create;
 
 create table c##dev.tables_to_create(
     name VARCHAR2(128)
@@ -518,10 +693,9 @@ create table columns(
     constraint fk_table_name foreign key(table_name) references tables_to_create(name)
 );
 
-call compare_schemes('C##DEV', 'C##PROD');
+call compare_schemes('C##DEVTEST', 'C##PROD');
 ----------------------------------------------------------------------------------------------
 select * from ALL_TAB_COLUMNS;
---upper names
 --tables to drop
 -- --
 select table_name from all_tables;
@@ -536,5 +710,8 @@ where COLUMN_NAME = 'TABLE_NAME';
 select *from all_tables where owner = 'c##dev';
 call compare_tables('C##DEVTEST', 'C##PROD');
 select * from tables_to_create;
---built-in tables mean --?
 select * from all_source where rownum<=100 and type = 'FUNCTION';
+select * from C##DEV.tables_to_create;
+truncate table C##DEV.tables_to_create;
+
+
