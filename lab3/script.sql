@@ -534,7 +534,7 @@ SELECT
 FROM ALL_TAB_COLS
 where COLUMN_NAME = 'TABLE_NAME';
 select *from all_tables where owner = 'c##dev';
-call compare_tables('C##DEV', 'C##PROD');
+call compare_tables('C##DEVTEST', 'C##PROD');
 select * from tables_to_create;
 --built-in tables mean --?
 select * from all_source where rownum<=100 and type = 'FUNCTION';
